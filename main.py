@@ -4,11 +4,14 @@ import numpy as np
 import requests
 from PIL import Image
 from io import BytesIO
+from fastapi import FastAPI, HTTPException
+import os
 
 model_file = "opencv_face_detector_uint8.pb"
 config_file = "opencv_face_detector.pbtxt"
 net = cv2.dnn.readNetFromTensorflow(model_file, config_file)
 
+app = FastAPI()
 
 def blur_faces(image_url):
     # Load the image from the URL
@@ -26,8 +29,7 @@ def blur_faces(image_url):
     img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
     if img is None:
-        print("Error: Unable to load image file.")
-        sys.exit(1)
+        raise HTTPException(status_code=400, detail="Unable to load image file.")
 
     # Create a blob from the image
     blob = cv2.dnn.blobFromImage(
@@ -72,33 +74,24 @@ def blur_faces(image_url):
 
 import requests
 
-
-def upload_to_server(image_path, url):
+def upload_to_server(image_path, upload_url):
     with open(image_path, "rb") as f:
         files = {"photo": f}
-        response = requests.post(url, files=files)
+        response = requests.post(upload_url, files=files)
         return response.json()
 
 
-import os
-import shutil
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
-import os
+@app.post("/blur")
+async def blur_face_endpoint(image_data: dict):
+    if "url" not in image_data:
+        raise HTTPException(status_code=400, detail="Image URL is missing in request body.")
 
-app = FastAPI()
+    image_url = image_data["url"]
+    output_file = blur_faces(image_url)
+    upload_url = "http://ec2-43-204-100-197.ap-south-1.compute.amazonaws.com:3000/upload"
+    upload_response = upload_to_server(output_file, upload_url)
 
+    # Clean up the temporary output file
+    os.remove(output_file)
 
-@app.post("/blur_face/")
-async def upload_file(url: str = Query(...)):
-    resp = blur_faces(url)
-    x = upload_to_server(
-        resp, "http://ec2-43-204-100-197.ap-south-1.compute.amazonaws.com:3000/upload"
-    )
-
-    if os.path.exists(resp):
-        os.remove(resp)
-
-    return {
-        "url": x,
-    }
+    return {"upload_response": upload_response}
